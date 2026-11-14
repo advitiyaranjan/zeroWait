@@ -1,0 +1,1 @@
+"""zeroWait API — Core configuration."""

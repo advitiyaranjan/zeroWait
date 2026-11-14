@@ -1,0 +1,72 @@
+"""Unit tests for Alembic migration configuration and scripts."""
+
+from pathlib import Path
+
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+
+def test_alembic_config_resolves() -> None:
+    """Verify alembic.ini is discoverable and configured properly."""
+    api_dir = Path(__file__).resolve().parent.parent
+    ini_path = api_dir / "alembic.ini"
+    assert ini_path.is_file(), f"Missing alembic.ini at {ini_path}"
+
+    alembic_cfg = Config(str(ini_path))
+    alembic_cfg.set_main_option("script_location", str(api_dir / "alembic"))
+    script = ScriptDirectory.from_config(alembic_cfg)
+
+    # Verify head migration is 0007_live_only_feeds
+    heads = script.get_heads()
+    assert len(heads) == 1
+    assert heads[0] == "0007_live_only_feeds"
+
+    # Verify initial migration
+    rev_0001 = script.get_revision("0001_initial_transit_models")
+    assert rev_0001 is not None
+    assert rev_0001.down_revision is None
+    assert "transit models" in (rev_0001.doc or "").lower()
+
+    # Verify forward migration 0002
+    rev_0002 = script.get_revision("0002_optional_agency_id")
+    assert rev_0002 is not None
+    assert rev_0002.down_revision == "0001_initial_transit_models"
+
+    # Verify forward migration 0003
+    rev_0003 = script.get_revision("0003_vehicle_positions")
+    assert rev_0003 is not None
+    assert rev_0003.down_revision == "0002_optional_agency_id"
+    assert "vehicle_positions" in (rev_0003.doc or "").lower()
+
+    # Verify forward migration 0004
+    rev_0004 = script.get_revision("0004_vehicle_observations")
+    assert rev_0004 is not None
+    assert rev_0004.down_revision == "0003_vehicle_positions"
+    assert "vehicle_observations" in (rev_0004.doc or "").lower()
+
+    # Verify forward migration 0005
+    rev_0005 = script.get_revision("0005_shapes")
+    assert rev_0005 is not None
+    assert rev_0005.down_revision == "0004_vehicle_observations"
+    assert "shapes" in (rev_0005.doc or "").lower()
+
+    # Verify forward migration 0006
+    rev_0006 = script.get_revision("0006_trip_updates")
+    assert rev_0006 is not None
+    assert rev_0006.down_revision == "0005_shapes"
+    assert "trip_updates" in (rev_0006.doc or "").lower()
+
+    # Verify forward migration 0007
+    rev_0007 = script.get_revision("0007_live_only_feeds")
+    assert rev_0007 is not None
+    assert rev_0007.down_revision == "0006_trip_updates"
+    assert "realtime-only feeds" in (rev_0007.doc or "").lower()
+
+
+def test_migration_environment_settings_integration() -> None:
+    """Verify that the Alembic environment uses app settings for database URL."""
+    api_dir = Path(__file__).resolve().parent.parent
+    alembic_cfg = Config(str(api_dir / "alembic.ini"))
+    configured_url = alembic_cfg.get_main_option("sqlalchemy.url")
+    assert configured_url is not None
+    assert "postgresql+asyncpg://" in configured_url

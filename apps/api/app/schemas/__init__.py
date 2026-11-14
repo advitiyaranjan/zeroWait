@@ -1,0 +1,41 @@
+"""zeroWait API — Pydantic schemas."""
+
+from app.schemas.health import HealthResponse
+from app.schemas.transit import (
+    FeedDetailResponse,
+    FeedSummaryResponse,
+    ItemEnvelope,
+    NearbyStopResponse,
+    PaginatedResponse,
+    PaginationMeta,
+    RouteDetailResponse,
+    RouteMapResponse,
+    RouteMapStopResponse,
+    RouteMapVehicleResponse,
+    RouteResponse,
+    RouteShapeResponse,
+    ShapePointResponse,
+    StopArrivalPrediction,
+    StopDetailResponse,
+    StopResponse,
+)
+
+__all__ = [
+    "FeedDetailResponse",
+    "FeedSummaryResponse",
+    "HealthResponse",
+    "ItemEnvelope",
+    "NearbyStopResponse",
+    "PaginatedResponse",
+    "PaginationMeta",
+    "RouteDetailResponse",
+    "RouteMapResponse",
+    "RouteMapStopResponse",
+    "RouteMapVehicleResponse",
+    "RouteResponse",
+    "RouteShapeResponse",
+    "ShapePointResponse",
+    "StopArrivalPrediction",
+    "StopDetailResponse",
+    "StopResponse",
+]

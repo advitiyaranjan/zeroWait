@@ -1,0 +1,394 @@
+# zeroWait — Database Design & Transit Data Models
+
+This document defines the database architecture, schema definitions, constraints, indexes, and relationships established in **Stage 1, Slice 1.1**.
+
+## 1. Overview & Multi-City Architecture
+
+zeroWait is designed to support multiple transit systems and cities concurrently. To achieve this without entity collisions, all transit data is scoped under a parent feed configuration (`transit_feeds`).
+
+Standard GTFS identifiers (`agency_id`, `route_id`, `stop_id`, `trip_id`, `service_id`) are unique only within their respective transit feed or agency. The schema enforces composite uniqueness constraints (e.g., `(feed_id, route_id)`) to prevent cross-feed collisions while preserving the agency's original GTFS identifiers.
+
+```mermaid
+erDiagram
+    transit_feeds ||--o{ agencies : "contains"
+    transit_feeds ||--o{ routes : "scopes"
+    transit_feeds ||--o{ stops : "scopes"
+    transit_feeds ||--o{ trips : "scopes"
+    transit_feeds ||--o{ calendars : "scopes"
+    transit_feeds ||--o{ calendar_dates : "scopes"
+    agencies ||--o{ routes : "operates"
+    routes ||--o{ trips : "contains"
+    trips ||--o{ stop_times : "schedules"
+    stops ||--o{ stop_times : "served_by"
+    stops ||--o{ stops : "parent_station"
+```
+
+---
+
+## 2. Table Specifications
+
+### 2.1 `transit_feeds`
+Stores configuration, feed URLs, and operational state for each tracked city or transit system.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
+| `city_name` | `VARCHAR(100)` | NOT NULL | Human-readable city name (e.g., "Delhi") |
+| `slug` | `VARCHAR(64)` | NOT NULL, UNIQUE, INDEX | URL-safe slug (e.g., "delhi-dtc") |
+| `static_gtfs_url` | `VARCHAR(2048)` | NOT NULL | HTTP URL to the static GTFS zip bundle |
+| `realtime_vehicle_positions_url` | `VARCHAR(2048)` | NULLABLE | GTFS-RT VehiclePositions endpoint URL |
+| `realtime_trip_updates_url` | `VARCHAR(2048)` | NULLABLE | GTFS-RT TripUpdates endpoint URL |
+| `realtime_alerts_url` | `VARCHAR(2048)` | NULLABLE | GTFS-RT ServiceAlerts endpoint URL |
+| `api_key_env_var` | `VARCHAR(100)` | NULLABLE | Reference name of the env var storing the API key |
+| `feed_status` | `VARCHAR(32)` | NOT NULL, DEFAULT 'active' | Operational status: active, inactive, maintenance |
+| `is_live_tracking_enabled` | `BOOLEAN` | NOT NULL, DEFAULT FALSE | Whether realtime vehicle polling is enabled |
+| `last_static_import_at` | `TIMESTAMP WITH TZ` | NULLABLE | Timestamp of last successful static GTFS ingestion |
+| `last_realtime_poll_at` | `TIMESTAMP WITH TZ` | NULLABLE | Timestamp of last successful GTFS-RT polling |
+| `created_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Creation timestamp |
+| `updated_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Last update timestamp |
+
+---
+
+### 2.2 `agencies`
+Stores transit agency information parsed from GTFS `agency.txt`.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
+| `feed_id` | `INTEGER` | FK (`transit_feeds.id` ON DELETE CASCADE), INDEX | Parent transit feed |
+| `agency_id` | `VARCHAR(255)` | NULLABLE | Original GTFS agency ID (optional in single-agency feeds; altered in migration 0002) |
+| `name` | `VARCHAR(255)` | NOT NULL | Full name of the transit agency |
+| `url` | `VARCHAR(2048)` | NOT NULL | Official agency URL |
+| `timezone` | `VARCHAR(100)` | NOT NULL | IANA timezone (e.g., "Asia/Kolkata") |
+| `phone` | `VARCHAR(50)` | NULLABLE | Voice telephone number |
+| `lang` | `VARCHAR(10)` | NULLABLE | Primary language code (e.g., "en", "hi") |
+| `fare_url` | `VARCHAR(2048)` | NULLABLE | URL for fare information |
+| `email` | `VARCHAR(255)` | NULLABLE | Customer service email address |
+| `created_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Creation timestamp |
+| `updated_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Last update timestamp |
+
+**Constraints:**
+- `UNIQUE (feed_id, agency_id)`
+
+---
+
+### 2.3 `routes`
+Stores transit routes from GTFS `routes.txt`.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
+| `feed_id` | `INTEGER` | FK (`transit_feeds.id` ON DELETE CASCADE), INDEX | Parent transit feed |
+| `agency_id` | `INTEGER` | FK (`agencies.id` ON DELETE CASCADE), INDEX | Operating agency |
+| `route_id` | `VARCHAR(255)` | NOT NULL | Original GTFS route ID |
+| `short_name` | `VARCHAR(100)` | NULLABLE | Short public route designation (e.g., "534") |
+| `long_name` | `VARCHAR(255)` | NULLABLE | Full descriptive name |
+| `description` | `VARCHAR(2048)` | NULLABLE | Detailed route description |
+| `route_type` | `INTEGER` | NOT NULL | GTFS route type (0=tram, 1=subway, 3=bus, etc.) |
+| `route_url` | `VARCHAR(2048)` | NULLABLE | URL of a web page about that particular route |
+| `route_color` | `VARCHAR(7)` | NULLABLE | 6-character hex color (e.g., "0072BC") |
+| `text_color` | `VARCHAR(7)` | NULLABLE | 6-character hex color for text |
+| `sort_order` | `INTEGER` | NULLABLE | Ordering index for UI presentation |
+| `created_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Creation timestamp |
+| `updated_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Last update timestamp |
+
+**Constraints & Indexes:**
+- `UNIQUE (feed_id, route_id)`
+- `INDEX (feed_id, route_type)`
+
+---
+
+### 2.4 `stops`
+Stores stops, stations, and platforms from GTFS `stops.txt` with geospatial support.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
+| `feed_id` | `INTEGER` | FK (`transit_feeds.id` ON DELETE CASCADE), INDEX | Parent transit feed |
+| `stop_id` | `VARCHAR(255)` | NOT NULL | Original GTFS stop ID |
+| `code` | `VARCHAR(100)` | NULLABLE | Short passenger-facing code |
+| `name` | `VARCHAR(255)` | NOT NULL | Name of the stop/station |
+| `description` | `VARCHAR(2048)` | NULLABLE | Useful description of the stop |
+| `latitude` | `FLOAT` | NOT NULL | WGS84 latitude coordinate |
+| `longitude` | `FLOAT` | NOT NULL | WGS84 longitude coordinate |
+| `point` | `geography(POINT, 4326)` | NULLABLE, GiST INDEX | PostGIS spatial point for proximity queries |
+| `parent_station_id` | `INTEGER` | FK (`stops.id` ON DELETE SET NULL), INDEX | Parent station reference |
+| `location_type` | `INTEGER` | NOT NULL, DEFAULT 0 | 0=stop, 1=station, 2=entrance/exit, etc. |
+| `wheelchair_boarding` | `INTEGER` | NOT NULL, DEFAULT 0 | 0=no info, 1=accessible, 2=inaccessible |
+| `platform_code` | `VARCHAR(50)` | NULLABLE | Platform identifier (e.g., "1", "A") |
+| `timezone` | `VARCHAR(100)` | NULLABLE | Stop-specific timezone if different from agency |
+| `created_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Creation timestamp |
+| `updated_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Last update timestamp |
+
+**Constraints & Indexes:**
+- `UNIQUE (feed_id, stop_id)`
+- `INDEX (feed_id, name)`
+- `INDEX (point) USING gist` (PostgreSQL/PostGIS)
+
+---
+
+### 2.5 `trips`
+Stores individual trips from GTFS `trips.txt`.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
+| `feed_id` | `INTEGER` | FK (`transit_feeds.id` ON DELETE CASCADE), INDEX | Parent transit feed |
+| `route_id` | `INTEGER` | FK (`routes.id` ON DELETE CASCADE), INDEX | Route this trip belongs to |
+| `service_id` | `VARCHAR(255)` | NOT NULL, INDEX | Calendar service schedule ID |
+| `trip_id` | `VARCHAR(255)` | NOT NULL | Original GTFS trip ID |
+| `trip_headsign` | `VARCHAR(255)` | NULLABLE | Destination sign displayed to riders |
+| `trip_short_name` | `VARCHAR(100)` | NULLABLE | Public-facing trip identifier |
+| `direction_id` | `INTEGER` | NULLABLE | 0 for outbound, 1 for inbound travel |
+| `block_id` | `VARCHAR(255)` | NULLABLE | Block identifier for interlining |
+| `shape_id` | `VARCHAR(255)` | NULLABLE, INDEX | Shape geometry identifier |
+| `wheelchair_accessible` | `INTEGER` | NOT NULL, DEFAULT 0 | Accessibility indicator |
+| `bikes_allowed` | `INTEGER` | NOT NULL, DEFAULT 0 | Bicycle policy indicator |
+| `created_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Creation timestamp |
+| `updated_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Last update timestamp |
+
+**Constraints & Indexes:**
+- `UNIQUE (feed_id, trip_id)`
+- `INDEX (feed_id, service_id)`
+- `INDEX (feed_id, shape_id)`
+
+---
+
+### 2.6 `stop_times`
+Stores scheduled arrival and departure times from GTFS `stop_times.txt`.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
+| `feed_id` | `INTEGER` | FK (`transit_feeds.id` ON DELETE CASCADE), INDEX | Parent transit feed |
+| `trip_id` | `INTEGER` | FK (`trips.id` ON DELETE CASCADE), INDEX | Trip reference |
+| `stop_id` | `INTEGER` | FK (`stops.id` ON DELETE CASCADE), INDEX | Stop reference |
+| `arrival_time` | `VARCHAR(8)` | NOT NULL | Time of arrival (HH:MM:SS, can exceed 24:00:00) |
+| `departure_time` | `VARCHAR(8)` | NOT NULL | Time of departure (HH:MM:SS) |
+| `stop_sequence` | `INTEGER` | NOT NULL | Order of the stop for the trip |
+| `stop_headsign` | `VARCHAR(255)` | NULLABLE | Headsign displayed from this stop onward |
+| `pickup_type` | `INTEGER` | NOT NULL, DEFAULT 0 | 0=regular, 1=none, 2=call agency, 3=coordinate |
+| `drop_off_type` | `INTEGER` | NOT NULL, DEFAULT 0 | 0=regular, 1=none, 2=call agency, 3=coordinate |
+| `shape_dist_traveled` | `FLOAT` | NULLABLE | Distance traveled along the shape |
+| `timepoint` | `INTEGER` | NOT NULL, DEFAULT 1 | 0=approximate schedule, 1=exact |
+| `created_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Creation timestamp |
+
+**Constraints & Indexes:**
+- `UNIQUE (trip_id, stop_sequence)`
+- `INDEX (stop_id, arrival_time)`
+- `INDEX (feed_id, trip_id)`
+
+---
+
+### 2.7 `calendars`
+Stores weekly operating patterns from GTFS `calendar.txt`.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
+| `feed_id` | `INTEGER` | FK (`transit_feeds.id` ON DELETE CASCADE), INDEX | Parent transit feed |
+| `service_id` | `VARCHAR(255)` | NOT NULL | Calendar service ID |
+| `monday` .. `sunday` | `BOOLEAN` | NOT NULL, DEFAULT FALSE | Operating days |
+| `start_date` | `DATE` | NOT NULL | Start date of service validity |
+| `end_date` | `DATE` | NOT NULL | End date of service validity |
+| `created_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Creation timestamp |
+| `updated_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Last update timestamp |
+
+**Constraints & Indexes:**
+- `UNIQUE (feed_id, service_id)`
+- `INDEX (feed_id, start_date, end_date)`
+
+---
+
+### 2.8 `calendar_dates`
+Stores specific calendar exceptions from GTFS `calendar_dates.txt`.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
+| `feed_id` | `INTEGER` | FK (`transit_feeds.id` ON DELETE CASCADE), INDEX | Parent transit feed |
+| `service_id` | `VARCHAR(255)` | NOT NULL | Calendar service ID |
+| `date` | `DATE` | NOT NULL | Date on which service exception applies |
+| `exception_type` | `INTEGER` | NOT NULL | 1=service added, 2=service removed |
+| `created_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Creation timestamp |
+
+**Constraints & Indexes:**
+- `UNIQUE (feed_id, service_id, date)`
+- `INDEX (feed_id, date)`
+
+---
+
+### 2.9 `vehicle_positions`
+Stores the current vehicle position snapshot for each feed, parsed from GTFS-Realtime Protocol Buffer messages.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
+| `feed_id` | `INTEGER` | FK (`transit_feeds.id` ON DELETE CASCADE), INDEX | Parent transit feed |
+| `entity_id` | `VARCHAR(255)` | NOT NULL | FeedEntity identifier from GTFS-Realtime |
+| `vehicle_id` | `VARCHAR(255)` | NULLABLE | VehicleDescriptor.id |
+| `vehicle_label` | `VARCHAR(255)` | NULLABLE | VehicleDescriptor.label |
+| `license_plate` | `VARCHAR(255)` | NULLABLE | VehicleDescriptor.license_plate |
+| `trip_id` | `VARCHAR(255)` | NULLABLE | TripDescriptor.trip_id (source string, loosely coupled) |
+| `route_id` | `VARCHAR(255)` | NULLABLE | TripDescriptor.route_id (source string) |
+| `direction_id` | `INTEGER` | NULLABLE | Trip direction index |
+| `start_time` | `VARCHAR(10)` | NULLABLE | Trip scheduled start time |
+| `start_date` | `VARCHAR(10)` | NULLABLE | Trip scheduled start date |
+| `schedule_relationship` | `INTEGER` | NULLABLE | Trip schedule relationship enum |
+| `stop_id` | `VARCHAR(255)` | NULLABLE | Current / upcoming stop identifier |
+| `current_stop_sequence` | `INTEGER` | NULLABLE | Stop sequence index along trip |
+| `current_status` | `INTEGER` | NULLABLE | 0=INCOMING_AT, 1=STOPPED_AT, 2=IN_TRANSIT_TO |
+| `latitude` | `FLOAT` | NOT NULL | WGS84 latitude coordinate |
+| `longitude` | `FLOAT` | NOT NULL | WGS84 longitude coordinate |
+| `point` | `geography(POINT, 4326)` | NULLABLE | PostGIS Point geometry with GiST index |
+| `bearing` | `FLOAT` | NULLABLE | Degrees clockwise from North [0.0, 360.0] |
+| `odometer` | `FLOAT` | NULLABLE | Distance traveled in meters |
+| `speed` | `FLOAT` | NULLABLE | Momentary speed in meters/second |
+| `congestion_level` | `INTEGER` | NULLABLE | Congestion level enum |
+| `occupancy_status` | `INTEGER` | NULLABLE | Occupancy status enum |
+| `occupancy_percentage` | `INTEGER` | NULLABLE | Occupancy ratio percentage |
+| `feed_timestamp` | `TIMESTAMP WITH TZ` | NULLABLE | FeedHeader timestamp from protobuf |
+| `vehicle_timestamp` | `TIMESTAMP WITH TZ` | NULLABLE | VehiclePosition timestamp from protobuf |
+| `recorded_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Receipt time on local server |
+
+**Constraints & Indexes:**
+- `UNIQUE (feed_id, entity_id)`
+- `INDEX (feed_id, route_id)`
+- `INDEX (feed_id, vehicle_id)`
+- `INDEX (point)` using GiST
+
+### `vehicle_observations`
+Append-only historical vehicle telemetry samples used for ETA estimation and delay pattern analysis.
+
+| Column | Type | Modifiers | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PK, SERIAL | Internal surrogate key |
+| `feed_id` | `INTEGER` | FK -> `transit_feeds.id`, NOT NULL | Feed scoping |
+| `entity_id` | `VARCHAR(255)` | NOT NULL | Feed entity identifier |
+| `vehicle_id` | `VARCHAR(255)` | NULLABLE | Agency vehicle identifier |
+| `vehicle_label` | `VARCHAR(255)` | NULLABLE | User-facing vehicle label |
+| `license_plate` | `VARCHAR(255)` | NULLABLE | Vehicle license plate |
+| `trip_id` | `VARCHAR(255)` | NULLABLE | Source GTFS trip_id |
+| `route_id` | `VARCHAR(255)` | NULLABLE | Source GTFS route_id |
+| `direction_id` | `INTEGER` | NULLABLE | 0 = outbound, 1 = inbound |
+| `start_time` | `VARCHAR(10)` | NULLABLE | Trip scheduled start time |
+| `start_date` | `VARCHAR(10)` | NULLABLE | Trip service date `YYYYMMDD` |
+| `schedule_relationship`| `INTEGER` | NULLABLE | 0=SCHEDULED, 1=ADDED, 2=UNSCHEDULED, 3=CANCELED |
+| `stop_id` | `VARCHAR(255)` | NULLABLE | Current or approaching GTFS stop_id |
+| `current_stop_sequence`| `INTEGER` | NULLABLE | Current stop sequence number |
+| `current_status` | `INTEGER` | NULLABLE | 0=INCOMING_AT, 1=STOPPED_AT, 2=IN_TRANSIT_TO |
+| `latitude` | `DOUBLE PRECISION` | NOT NULL | WGS84 latitude `[-90, 90]` |
+| `longitude` | `DOUBLE PRECISION` | NOT NULL | WGS84 longitude `[-180, 180]` |
+| `point` | `geography(POINT, 4326)` | NULLABLE | PostGIS spatial point |
+| `bearing` | `DOUBLE PRECISION` | NULLABLE | Direction of travel `[0, 360]` |
+| `odometer` | `DOUBLE PRECISION` | NULLABLE | Distance traveled in meters |
+| `speed` | `DOUBLE PRECISION` | NULLABLE | Current speed in m/s |
+| `congestion_level` | `INTEGER` | NULLABLE | GTFS-RT congestion level |
+| `occupancy_status` | `INTEGER` | NULLABLE | GTFS-RT vehicle occupancy status |
+| `occupancy_percentage`| `INTEGER` | NULLABLE | GTFS-RT passenger capacity percentage |
+| `observed_at` | `TIMESTAMP WITH TZ` | NOT NULL | Canonical observation timestamp (fallback hierarchy) |
+| `vehicle_timestamp` | `TIMESTAMP WITH TZ` | NULLABLE | Source vehicle timestamp from GTFS-RT message |
+| `feed_timestamp` | `TIMESTAMP WITH TZ` | NULLABLE | FeedHeader timestamp from GTFS-RT message |
+| `recorded_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Server ingestion receipt timestamp |
+
+**Constraints & Indexes:**
+- `UNIQUE (feed_id, entity_id, observed_at)`
+- `INDEX (feed_id, observed_at)`
+- `INDEX (feed_id, route_id, observed_at)`
+- `INDEX (feed_id, vehicle_id, observed_at)`
+- `INDEX (point)` using GiST
+
+---
+
+## 3. Geospatial Design & PostGIS Extension
+
+PostGIS extension is explicitly configured in migration `0001_initial_transit_models`:
+```sql
+CREATE EXTENSION IF NOT EXISTS postgis;
+```
+
+The `stops`, `vehicle_positions`, and `vehicle_observations` tables contain:
+1. `latitude` and `longitude` numeric floats for immediate, dialect-agnostic coordinate display.
+2. `point` (`geography(POINT, 4326)`) with a GiST index for spatial queries such as:
+   - Proximity search: `ST_DWithin(point, ST_MakePoint(lon, lat)::geography, radius_meters)`
+   - Nearest vehicle / stop: `ORDER BY point <-> ST_MakePoint(lon, lat)::geography LIMIT 5`
+
+For local unit testing without PostGIS/SpatiaLite, a fallback compilation rule compiles `Geography` to `BLOB` in SQLite, allowing in-memory integration testing without requiring local database servers.
+
+---
+
+## 4. Alembic Migration Structure
+
+- **Revisions**:
+  - `0001_initial_transit_models`: Initial schema creation for all 8 static transit tables with PostGIS extension.
+  - `0002_optional_agency_id`: Alter `agencies.agency_id` to `nullable=True` to support valid single-agency GTFS Schedule feeds per specification.
+  - `0003_vehicle_positions`: Create `vehicle_positions` current snapshot table with spatial GiST index and feed scoping.
+  - `0004_vehicle_observations`: Create `vehicle_observations` historical telemetry table with composite uniqueness constraint and spatial GiST index.
+- **Offline Generation**:
+  ```bash
+  alembic upgrade head --sql
+  alembic downgrade 0004_vehicle_observations:0003_vehicle_positions --sql
+  ```
+- **Live Upgrade**:
+  ```bash
+  alembic upgrade head
+  ```
+
+---
+
+## 5. Feed-Scoped Ingestion & Persistence Strategy
+
+The static ingestion pipeline (`GTFSIngestionService`) is designed with strict transactional safety:
+
+1. **Feed Isolation**: All operations are scoped strictly to a single `feed_id`.
+2. **Idempotent Atomic Replacement**:
+   - Deletes existing records for that feed in reverse foreign key order (`stop_times` → `trips` → `routes` → `stops` → `calendar_dates` → `calendars` → `agencies`).
+   - Inserts newly parsed entities in foreign key order, establishing internal primary key relationships.
+   - For stops with platform/parent station hierarchy, inserts all stops first, then maps and updates `parent_station_id`.
+3. **Bounded Batch Persistence**:
+   - `stop_times` rows (often tens of thousands) are committed in bounded batches of 1,000 rows to prevent memory exhaustion and database lock saturation.
+4. **All-or-Nothing Transactions**:
+   - Entire process runs within a single database transaction.
+   - Any validation error, foreign key violation, or unexpected exception triggers an immediate session rollback, leaving any prior feed data completely intact.
+
+---
+
+## 6. GTFS-Realtime Snapshot Persistence Strategy
+
+The realtime vehicle position ingestion pipeline (`VehiclePositionIngestionService`):
+
+1. **Current-State Snapshot Design**:
+   - `vehicle_positions` maintains only the latest snapshot of active vehicles for each feed.
+   - Historical tracking or vehicle breadcrumbs are deliberately decoupled from this snapshot table.
+2. **Atomic Full Replacement**:
+   - For valid `FULL_DATASET` feeds, replaces all current records for that `feed_id` inside an atomic transaction.
+   - On parse, coordinate, or persistence failure, immediately rolls back, preserving the previous valid snapshot in full.
+3. **Explicit DIFFERENTIAL Rejection**:
+   - GTFS-Realtime `DIFFERENTIAL` incrementality is unsupported by design for this consumer; rejected with `UnsupportedIncrementalityError` without modifying database state.
+4. **Operational Timestamp Tracking**:
+   - `TransitFeed.last_realtime_poll_at` is updated only upon successful transaction commit.
+
+---
+
+## 7. Historical Vehicle Observation Storage & Idempotency Strategy
+
+The historical observation pipeline records longitudinal vehicle telemetry for ETA calculation:
+
+1. **Composite Uniqueness Constraint**:
+   - `UNIQUE (feed_id, entity_id, observed_at)` ensures that duplicate samples polled repeatedly from a GTFS-RT feed cannot create duplicate database rows.
+2. **Deterministic Timestamp Fallback Hierarchy**:
+   - GTFS-RT vehicle telemetry may omit the vehicle-level timestamp.
+   - The canonical `observed_at` timestamp is derived deterministically:
+     `observed_at = VehiclePosition.timestamp or FeedHeader.timestamp or server_receipt_time`
+   - All three source timestamps (`observed_at`, `vehicle_timestamp`, `feed_timestamp`, `recorded_at`) are stored as distinct columns to maintain auditability.
+3. **Atomic Dual-Persistence Transaction**:
+   - In each poll cycle, `VehiclePositionIngestionService` atomically:
+     1. Replaces the current-state `vehicle_positions` snapshot.
+     2. Queries existing `(entity_id, observed_at)` keys for the current batch.
+     3. Inserts only novel `VehicleObservation` rows into history.
+     4. Updates `TransitFeed.last_realtime_poll_at`.
+   - If any step fails, the entire transaction rolls back; no orphan snapshots or half-persisted history records remain.
+4. **Bounded Historical Access**:
+   - Historical queries require a mandatory `since` timestamp parameter (`get_recent_observations`).
+   - Unbounded queries across all history are strictly prohibited to prevent memory exhaustion.
+   - Result limits are capped at 1,000 records per query call.

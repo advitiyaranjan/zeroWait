@@ -1,0 +1,368 @@
+# 🚌 zeroWait
+
+**Real-time public transit tracking**
+
+## Problem Statement
+
+Public transit riders often lack accurate, real-time information about vehicle locations and arrival times. Existing apps may not cover all cities or provide reliable predictions. Riders are left guessing whether their bus is around the corner or still twenty minutes away.
+
+zeroWait aims to solve this by ingesting standardized GTFS and GTFS-Realtime data, displaying live vehicle positions on an interactive map, and providing estimated arrival times based on real-time tracking and historical delay patterns.
+
+## Features
+
+### Implemented Functionality
+
+- 📍 **Route and stop exploration** — Feed-aware explorer to browse transit agencies, routes, and ordered stops.
+- 🗺️ **Interactive map visualization** — Feed-scoped Leaflet map displaying real GTFS route shapes, stops, and live vehicle markers.
+- ⏱️ **Real-time arrivals & ETA prediction** — Stop-level arrivals board combining scheduled stop times, GTFS-RT TripUpdates, and live vehicle positions with delay calculation.
+- ⚡ **Live WebSocket updates & pub/sub** — Instant UI refresh over feed-scoped WebSockets backed by PostgreSQL `LISTEN/NOTIFY`, with LRU deduplication and automatic fallback to 30-second steady-state REST polling.
+- 🔄 **GTFS & GTFS-Realtime ingestion** — Atomic ingestion pipelines for static GTFS archives (shapes, routes, stops, trips, calendar) and GTFS-RT vehicle positions and trip updates.
+- 🧭 **Direct stop-to-stop trip planner** — Fast, feed-aware direct journey finder between any two stops with active calendar evaluation, departure time filtering, GTFS-RT live delay enrichment, duration and intermediate stop counts, and interactive route map focus.
+- 🏙️ **Multi-feed configuration** — Database-backed feed registry for configuring independent transit feeds by city/agency with operational status management.
+
+### Future Roadmap
+
+- 🧭 **Multi-modal trip planning** — Turn-by-turn route planning between arbitrary locations (e.g. via Connection Scan Algorithm or RAPTOR).
+- ⭐ **User preferences & saved stops** — Bookmarks and favorites for frequent routes and stops.
+- ☁️ **Cloud deployment & multi-city production hosting** — Managed multi-region hosting and automated feed polling workers.
+
+## Technology Stack
+
+| Category | Technologies |
+|----------|-------------|
+| **Frontend** | React, TypeScript, Vite, Tailwind CSS, TanStack Query, Zustand |
+| **Backend** | Python, FastAPI, Pydantic, SQLAlchemy, Alembic |
+| **Database** | PostgreSQL, PostGIS |
+| **Testing** | Vitest (frontend), Pytest (backend) |
+| **CI/CD** | GitHub Actions |
+
+## Architecture Overview
+
+zeroWait follows a three-tier architecture:
+
+1. **React SPA** — The frontend serves the UI, renders the map, and communicates with the backend via REST API and WebSocket connections
+2. **FastAPI Backend** — Serves REST endpoints for transit data, manages WebSocket connections for real-time updates, and runs background services for GTFS ingestion and ETA prediction
+3. **PostgreSQL/PostGIS** — Stores all transit data (routes, stops, schedules, vehicle positions) with geospatial indexing for efficient location-based queries
+
+```
+User → React SPA → FastAPI (REST + WebSocket) → PostgreSQL/PostGIS
+                                ↑
+              GTFS Static Feed ─┘
+              GTFS-RT Feed ─────┘
+```
+
+## Repository Structure
+
+```
+zeroWait/
+├── apps/
+│   ├── web/               # React frontend (Vite + TypeScript + Tailwind)
+│   └── api/               # FastAPI backend (Python)
+├── docs/
+│   ├── architecture/      # System architecture documentation
+│   └── decisions/         # Architectural Decision Records (ADRs)
+├── infrastructure/        # Docker, deployment configs
+├── scripts/               # Utility scripts
+├── .github/workflows/     # CI/CD pipeline definitions
+├── .env.example           # Environment variable template
+├── AGENTS.md              # Agent coding guidelines
+├── PROJECT_INSTRUCTIONS.md # Development instructions
+└── README.md              # This file
+```
+
+## Windows Quickstart (Automated & Reproducible)
+
+To clone and run zeroWait on a new Windows computer without manually modifying application source code:
+
+### 1. Prerequisites on Windows
+- **Windows 10 / 11** with **PowerShell 5.1+**
+- **Git for Windows**: [git-scm.com](https://git-scm.com/)
+- **Docker Desktop**: [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/) (WSL2 Linux backend enabled and engine running)
+
+### 2. Clone the Repository
+```powershell
+git clone https://github.com/advitiyaranjan/zeroWait.git zeroWait
+cd zeroWait
+```
+
+### 3. External Datasets & Credentials
+zeroWait tracks Delhi public buses using two distinct data feeds. Due to license and privacy terms, credentials and datasets are not committed to Git and must be obtained separately:
+
+| Asset | Source | Acquisition Instructions | Configuration in zeroWait |
+|---|---|---|---|
+| **Real-time Vehicle Positions (`delhi-bus`)** | [Open Transit Data Delhi](https://otd.delhi.gov.in/) | Sign up for a free developer account to get an API key. | Set `DELHI_TRANSIT_API_KEY=<key>` in `.env` |
+| **Static GTFS Schedules & Routes (`delhi-buses`)** | [Delhi Transport Stack](https://delhi.transportstack.in/data-services) | Sign in and request the **Delhi Buses: GTFS Static Data – DTC / DoT** archive from *Data & Services*. | Save to `data/gtfs/delhi-buses.zip` or pass `-ArchivePath` |
+
+### 4. Run Automated Setup
+Open PowerShell at the repository root and run:
+
+```powershell
+# Allow script execution for the current PowerShell session
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# Run automated setup
+.\scripts\setup-delhi-transit.ps1
+```
+
+The script automatically:
+1. Validates prerequisites (PowerShell, Docker Desktop & daemon status).
+2. Creates and initializes `.env` from `.env.example` if missing, generating secure local database credentials.
+3. Locates and validates the static GTFS archive (verifying ZIP integrity, safety bounds, and required tables).
+4. Builds and starts the Docker Compose stack (PostGIS database, Alembic migration runner, FastAPI backend, React/Nginx frontend).
+5. Idempotently registers both transit feeds (`delhi-bus` for live tracking and `delhi-buses` for static routes).
+6. Ingests static GTFS data into PostgreSQL/PostGIS (skipping redundant re-import on subsequent runs).
+7. Verifies health of all services and endpoints.
+
+### 5. Setup Options & Advanced Usage
+```powershell
+# Use a custom or manually downloaded archive path
+.\scripts\setup-delhi-transit.ps1 -ArchivePath "C:\Users\<user>\Downloads\delhi_buses_static_gtfs_v1.zip"
+
+# Verify archive against expected SHA-256 checksum
+.\scripts\setup-delhi-transit.ps1 -ExpectedSha256 "8eb05d9c21e7a6b42d7b49de45cb095b70ddee5b8f7716859330c9784c322f05"
+
+# Automatically download static archive from authorized URL
+.\scripts\setup-delhi-transit.ps1 -DownloadStaticFeed -StaticFeedUrl "https://agency.example/gtfs.zip"
+
+# Start stack without rebuilding Docker images
+.\scripts\setup-delhi-transit.ps1 -SkipBuild
+
+# Force re-ingestion of static data even if already imported
+.\scripts\setup-delhi-transit.ps1 -ForceImport
+```
+
+Once setup completes, access:
+- **Web Application**: `http://localhost:3000/`
+- **Backend API Docs**: `http://localhost:8000/docs`
+- **Health Check**: `http://localhost:8000/api/health`
+
+---
+
+## Local Setup (Manual & Multi-Platform)
+
+### Prerequisites
+
+- **Node.js** 22.12+
+- **Python** 3.11+
+- **PostgreSQL** 15+ with PostGIS extension
+- **Git**
+
+### Clone the Repository
+
+```bash
+git clone https://github.com/advitiyaranjan/zeroWait.git zeroWait
+cd zeroWait
+```
+
+### Configure Environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your local configuration. See [Environment Configuration](#environment-configuration) below.
+
+### Docker Compose Full Stack (Recommended)
+
+zeroWait includes a complete Docker Compose scaffolding for running the database, migrations, API, and web frontend in isolated containers:
+
+```bash
+# 1. Copy configuration template and configure credentials
+cp .env.example .env
+
+# 2. Start the full application stack
+docker compose up -d --build
+
+# 3. Check service health and status
+docker compose ps
+
+# 4. View logs
+docker compose logs -f api
+
+# 5. Stop the stack
+docker compose down
+```
+
+#### Service Architecture & Startup Order
+1. **`db`** (`postgis/postgis:16-3.4`): Starts PostgreSQL/PostGIS and verifies readiness via `pg_isready` health check. Data persists in named volume `zerowait-pgdata`.
+2. **`migrate`** (`zerowait-api:0.1.0`): One-shot container that waits for `db` to be healthy, executes `alembic upgrade head` to apply all database migrations safely, and exits cleanly. This prevents concurrent migration race conditions on restarts or scaling.
+3. **`api`** (`zerowait-api:0.1.0`): Starts FastAPI on port 8000 only after `migrate` completes successfully (`condition: service_completed_successfully`) and `db` is healthy. Verified via native Python `GET /api/health` health check.
+4. **`web`** (`zerowait-web:0.1.0`): Multi-stage build (`node:22-alpine` builder + `nginx:1.30.6-alpine` runtime) serving the React SPA on port 3000 (`http://localhost:3000`) and reverse-proxying `/api/` to the backend. Verified via Nginx `/health` check.
+
+> **Browser Networking Note**: Client-side JavaScript executes in the user's browser, not inside the Docker network. Use `http://localhost:8000` (or leave empty `""` to use Nginx reverse proxying). Never set `VITE_API_URL` to internal Docker hostnames like `http://api:8000`.
+
+> **Runtime verification**: The local Docker Compose stack was smoke-tested on 2026-11-13. The database, API, and web services reported healthy, the migration service exited successfully, and `/api/health` reported a connected database. The authorized Delhi realtime worker successfully polled and stored about 5,300 current vehicle positions; the map displays up to 2,000 markers at a time. The full licensed GTFS archive is still pending portal access, so static routes, stops, and schedule-based arrivals become available after it is downloaded and imported.
+
+## Environment Configuration
+
+The `.env.example` file contains all required environment variables. Copy it to `.env` and configure each section:
+
+| Variable Group | Description |
+|---------------|-------------|
+| **Database** | PostgreSQL connection string, host, port, credentials |
+| **GTFS** | GTFS static feed URLs, download paths |
+| **GTFS-RT** | GTFS-Realtime feed URLs, API keys (if required by transit agency) |
+| **Server** | Backend host, port, CORS origins |
+| **Frontend** | API base URL, WebSocket URL |
+
+> **Security:** Never commit your `.env` file. It is included in `.gitignore`.
+
+### Configure the Delhi bus feed
+
+zeroWait uses the official **Delhi Buses: GTFS Static Data – DTC / DoT** listing from the [Delhi Transport Stack catalogue](https://delhi.transportstack.in/data-services) and the authorized Open Transit Data Delhi vehicle-position API.
+
+1. Register or sign in to the Delhi Transport Stack portal.
+2. Request the Delhi bus static GTFS dataset from **Data & Services**.
+3. After the portal confirms access by email, download the archive.
+4. Save it as `data/gtfs/delhi-buses.zip` in this repository. The directory is ignored by Git because the licensed archive should remain local.
+5. Keep the already configured `DELHI_TRANSIT_API_KEY` in `.env`; the setup script never asks for or prints the key.
+6. From PowerShell at the repository root, run:
+
+```powershell
+.\scripts\setup-delhi-transit.ps1
+```
+
+The script builds and starts Docker Compose, registers the `delhi-bus` feed with the API key supplied only through the environment, and imports the static archive when it is present. If the archive is not available yet, the live map still starts and shows the bus positions without route matching. Run the script again after saving the archive to import it. The app footer attributes static data to Delhi Transport Stack and live positions to Open Transit Data Delhi, as required by the dataset terms.
+
+The public sample archive is intentionally not used as the production feed: it contains only a small subset of GTFS rows.
+
+### Register and import another transit feed
+
+Feed registration is an operator-only CLI action; the public API does not expose feed-management endpoints. The command records source metadata and an optional **environment-variable name** for a provider key. It never accepts the key value, and live tracking stays disabled unless explicitly enabled.
+
+```powershell
+# Register metadata for a transit feed. Use a source you are authorized to access.
+docker compose exec api python -m app.services.gtfs.cli register `
+  --slug demo-city `
+  --city-name "Demo City" `
+  --static-url "https://agency.example/gtfs.zip" `
+  --api-key-env-var DELHI_TRANSIT_API_KEY
+
+# Copy a GTFS ZIP that you downloaded and are permitted to use into the API container.
+docker cp .\gtfs.zip zerowait-api:/tmp/gtfs.zip
+
+# Validate and import the archive.
+docker compose exec api python -m app.services.gtfs.cli ingest `
+  --slug demo-city `
+  --file /tmp/gtfs.zip
+```
+
+For a protected feed, put the credential in `.env` using the same environment-variable name, never in a URL or command argument. The Compose configuration passes `DELHI_TRANSIT_API_KEY` to the API container; add an explicit environment mapping if another key name is required. Register authorized realtime URLs separately and add `--enable-live-tracking` only when the provider has granted realtime access. A successful import makes the feed and its routes/stops available to the explorer at `http://localhost:3000/`.
+
+## Running the Frontend
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+The development server starts at `http://localhost:5173` by default.
+
+## Running the Backend
+
+```bash
+cd apps/api
+pip install -e ".[dev]"
+uvicorn app.main:app --reload
+```
+
+The API server starts at `http://localhost:8000` by default. API documentation is available at `http://localhost:8000/docs`.
+
+## Testing
+
+### Frontend Tests
+
+```bash
+cd apps/web
+npm test
+```
+
+### Backend Tests
+
+```bash
+cd apps/api
+pytest
+```
+
+### Run All Tests in CI
+
+The GitHub Actions pipeline runs both frontend and backend tests automatically on every push.
+
+## Current Development Status
+
+| Stage | Description | Status |
+|-------|------------|--------|
+| Stage 0 | Project initialization and foundation | ✅ Complete |
+| Stage 1 | GTFS static data ingestion | ✅ Complete (Slices 1.1, 1.2 & 1.3) |
+| Stage 2 | GTFS-Realtime integration | ✅ Complete (Slice 2.1 Complete) |
+| Stage 3 | Historical Observation & ETA Prediction | ✅ Complete (Slices 3.1 & 3.2 Complete) |
+| Stage 4 | UI polish and deployment | ✅ Complete (Slices 4.1–4.5 & Slice 4.6 Follow-Up Complete) |
+| Stage 5 | Direct Route Trip Planning & Polish | 🟡 In Progress (Slice 5.1 Complete) |
+
+### Completed Milestones
+- **Stage 0**: Full foundation with React/TS/Tailwind frontend, FastAPI backend, CI workflows, and documentation.
+- **Stage 1, Slice 1.1**: Database foundation, PostgreSQL/PostGIS connection handling, transit data models (`TransitFeed`, `Agency`, `Route`, `Stop`, `Trip`, `StopTime`, `Calendar`, `CalendarDate`), and initial Alembic migration (`0001_initial_transit_models`).
+- **Stage 1, Slice 1.2**: GTFS Static Ingestion Pipeline (`GTFSIngestionService`), in-memory safe ZIP extraction (protecting against decompression bombs, path traversal, encryption), robust CSV parsing with full GTFS Schedule compliance (single-agency without `agency_id`, multi-agency validation, post-midnight times e.g. `25:35:00`, calendar exception dates, coordinate bounds, referential checks), feed-scoped atomic/idempotent persistence, forward migration `0002_optional_agency_id`, and administrative CLI.
+- **Stage 1, Slice 1.3**: Transit Query API & Route/Stop Exploration (`/api/v1/feeds/...`), feed isolation, route listing/search/filtering by GTFS route_type and agency, GTFS string ID detail endpoints, stop listing/search, geospatial nearby stop search (`/stops/nearby`) via PostGIS `ST_DWithin`/`ST_Distance` with SQLite fallback, bounded pagination metadata, sanitized 503 database unavailability error handling, and comprehensive test suite (59 total backend tests).
+- **Stage 2, Slice 2.1**: GTFS-Realtime Vehicle-Position Ingestion (`VehiclePositionIngestionService`), official MobilityData protobuf decoding (`gtfs_realtime_pb2.FeedMessage`), FeedHeader incrementality validation with explicit `DIFFERENTIAL` rejection, duplicate entity ID validation, coordinate bounds checking (`[-90, 90]`, `[-180, 180]`), `vehicle_positions` snapshot model with PostGIS GiST index, forward migration `0003_vehicle_positions`, atomic snapshot persistence, rollback preservation of previous snapshots, administrative CLI (`realtime-cli poll-vehicles`), and comprehensive test suite (86 total backend tests).
+- **Stage 3, Slice 3.1**: Historical Vehicle Observation Storage (`VehicleObservation` model, forward migration `0004_vehicle_observations`), composite idempotency constraint on `(feed_id, entity_id, observed_at)` with deterministic timestamp fallback (`vehicle_timestamp` → `feed_timestamp` → server receipt time), atomic transaction combining current snapshot replacement and duplicate-sample deduplication, internal query helper `get_recent_observations(...)` with mandatory `since` bound and result capping, PostGIS spatial GiST indexing, and 9 new deterministic integration tests (96 total backend tests).
+- **Stage 3, Slice 3.2**: Stop Arrival Predictions & ETA Engine (`ArrivalPredictionService`, endpoint `GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals`), GTFS calendar and calendar_dates active service evaluation, agency timezone resolution, extended-hour service times (>24:00) handling, downstream stop eligibility filtering based on vehicle `current_stop_sequence`, realtime telemetry freshness window enforcement (<= 300s), deterministic historical median delay calculation from `STOPPED_AT` observations at scheduled stops, transparent schedule fallback when history is absent, and 9 new comprehensive integration tests (105 total backend tests).
+- **Stage 4, Slice 4.1**: Feed-Aware Transit Explorer & Live Arrivals (`apps/web` React/TypeScript SPA with TanStack Query and Zustand):
+  - Enriched backend `GET /api/v1/feeds` returning bounded public UI metadata (`id`, `slug`, `city_name`, `feed_status`, `is_live_tracking_enabled`, `last_static_import_at`, `last_realtime_poll_at`) without exposing secrets, credentials, or private URLs.
+  - Configurable backend API base URL via `VITE_API_URL` environment convention with `.env.example`.
+  - Accessible, responsive UI components: `FeedSelector` with operational and live tracking badges, `StopSearch` with text filtering and wheelchair accessibility indicators, and `ArrivalsBoard` with scheduled/estimated arrival times, formatted delay badges (`+X min late`, `On time`, `X min early`), prediction source labels (`Live + History` vs `Schedule`), telemetry observation age, and agency timezone disclosure.
+  - Strict feed isolation: switching transit feeds immediately resets the active stop and arrivals view to prevent cross-feed data leakage.
+  - Comprehensive unit and integration test suite: 46 Vitest frontend tests across 5 files, and 105 backend Pytest tests.
+- **Stage 4, Slice 4.2**: Interactive Map & Route Visualization:
+  - Feed-scoped GTFS `shapes.txt` ingestion into new `shapes` PostGIS model with spatial GiST indexing and forward migration `0005_shapes`.
+  - Read-only bounded route map endpoint (`GET /api/v1/feeds/{feed_slug}/routes/{route_id}/map`) returning true shape point sequences, ordered stops served, and fresh route-scoped vehicle positions with bearing and freshness window (<= 300s). Strict avoidance of fabricated geometry: routes without shapes return an empty shape list and a prominent warning.
+  - Leaflet-based responsive map component (`MapView`) rendering true shape polylines in route colors, stop circle markers, and bearing-oriented live vehicle markers.
+  - Configurable tile provider URL via `VITE_MAP_TILE_URL` (defaulting to OpenStreetMap standard tiles) with persistent attribution and documented usage policy.
+  - Keyboard-accessible route selector (`RouteSelector`) and dual-tab stop/vehicle inspector panel (`MapDetailsPanel`).
+  - Feed and route isolation: switching feeds clears active routes, stops, vehicles, and map layers.
+  - Comprehensive test suite: 65 Vitest frontend tests and 114 Pytest backend tests.
+- **Stage 4, Slice 4.3**: Realtime Polling & Live Map Refresh:
+  - Added periodic client refresh for active stop arrivals and route vehicle positions with a conservative, configurable 30-second interval (`DEFAULT_POLLING_INTERVAL_MS = 30_000`, `VITE_POLLING_INTERVAL_SEC=30`).
+  - Active-tab visibility management (`useDocumentVisibility`, `usePollingVisibilityRefresh`): pauses polling while the page or tab is hidden, and performs an immediate refresh on visibility return.
+  - Strict selection scoping: polling runs only when relevant entities are selected (`feed + stop` for arrivals, `feed + route` for map and vehicle positions); switching feeds or routes immediately halts stale polling and prevents cross-feed data leakage.
+  - Transient failure resilience: preserves the last successful predictions and vehicle positions on transient refresh errors, accompanied by a non-blocking warning banner, last updated timestamp (`formatLastUpdated`), "⚠️ Stale" status pill, and manual retry controls.
+  - JSON API polling only: Leaflet map tiles are untouched during background polling, vector layers update in-place, and map bounds auto-fit only on initial route selection to maintain stable viewports.
+  - Comprehensive test suite: 81 Vitest frontend tests across 6 files, and 114 Pytest backend tests.
+- **Stage 4, Slice 4.4**: GTFS-Realtime TripUpdates Ingestion:
+  - GTFS-RT TripUpdate model (`TripUpdate`) and forward migration `0006_trip_updates` storing feed-scoped stop-time predictions and trip cancellations.
+  - Protocol buffer parser (`parse_trip_updates`) with `DIFFERENTIAL` incrementality rejection, duplicate entity ID validation, timestamp bounds enforcement, and defensive handling of partial descriptors.
+  - Ingestion service (`TripUpdateIngestionService`) with atomic snapshot replacement, feed isolation, and graceful skip when `realtime_trip_updates_url` is omitted.
+  - Combined poll lifecycle in `realtime-cli poll-vehicles`: fetches vehicle positions and configured TripUpdates in a single poll execution, while local `--file` mode remains fully offline without outbound network calls. Error isolation ensures failed TripUpdates download/parsing preserves previous snapshot state and does not lose processed vehicle observations. Retains `poll-trip-updates` as an operator fallback command.
+  - Prediction service integration (`ArrivalPredictionService`): priority evaluation for `TRIP_UPDATE` prediction source, absolute event time precedence over delay (`time` > `delay`), departure fallback, trip cancellation (`CANCELED`) suppression, and skipped stop (`SKIPPED`) suppression, gracefully coexisting with vehicle positions and schedule fallbacks.
+  - Frontend integration: `TRIP_UPDATE` prediction source formatting with prominent "Live TripUpdate" badge styling in `ArrivalsBoard`.
+  - Comprehensive test suite: 82 Vitest frontend tests across 6 files, and 136 Pytest backend tests across 10 files.
+- **Stage 4, Slice 4.5**: Docker Compose Production Scaffolding & Application Polish:
+  - Multi-service Docker Compose topology (`db`, `migrate`, `api`, `web`) with pinned base images (`postgis/postgis:16-3.4`, `python:3.12-slim-bookworm`, `node:22-alpine3.20`, `nginx:1.30.6-alpine`).
+  - Safe, non-root API containerization with unprivileged `zerowait` runtime user and zero-dependency Python standard library health check.
+  - Safe, isolated migration runner (`migrate` service) guaranteeing Alembic migrations execute once to completion before FastAPI serves requests, preventing competing migration processes on restart or scaling.
+  - High-performance Nginx SPA runtime with gzip compression, long-term static asset caching, SPA client-side fallback, dedicated container health check, and internal reverse proxy for `/api/` traffic.
+  - Integration gap polish: normalized `database_url` conversion from `postgresql://` to `postgresql+asyncpg://`, expanded CORS default origins to support Compose web port 3000, normalized API base URL trailing slashes and empty string relative paths, and documented browser networking constraints.
+  - Safe, placeholder-only `.env.example` template without usable default credentials, accompanied by clear startup and security guidance.
+  - Comprehensive test suite: 83 Vitest frontend tests across 6 files, and 138 Pytest backend tests across 10 files.
+- **Stage 4, Slice 4.6**: Core WebSocket Live Updates:
+  - Feed-scoped FastAPI WebSocket endpoint (`/api/v1/feeds/{feed_slug}/ws`) with feed validation, policy violation rejection (code 1008) for unknown or inactive feeds, and ping/pong heartbeats.
+  - Zero-broker PostgreSQL `LISTEN/NOTIFY` pub/sub on channel `zerowait_feed_updates` broadcasting lightweight `FeedUpdateEvent` payloads with UUID `event_id` on snapshot commit; rollback or failed transactions publish zero events.
+  - Managed async database listener (`run_db_listener`) with single dedicated connection, exponential reconnection backoff, and graceful shutdown; thread-safe `ConnectionManager` with feed isolation, LRU event deduplication, and dead connection pruning.
+  - React live update hook (`useFeedLiveUpdates`) with TanStack Query cache invalidation (`routeMap`, `arrivals`), active-tab visibility lifecycle management, exponential reconnect backoff, and seamless fallback to 30-second steady-state REST polling on disconnect, error, or hidden tabs (pauses redundant background polling while WebSocket is actively connected).
+  - Accessible, responsive UI live status indicators (`● Live (WS)` vs `● Live (30s)` fallback vs `⏸ Paused` vs `⚠️ Stale`) across the dashboard, arrivals board, and interactive map view.
+  - Protocol upgrade configuration in Vite development server proxy (`ws: true`) and Nginx reverse proxy (`map $http_upgrade $connection_upgrade` and `Upgrade`/`Connection` headers).
+  - Comprehensive test suite: 93 Vitest frontend tests across 7 files, and 153 Pytest backend tests across 11 files.
+- **Stage 5, Slice 5.1**: Direct Route Stop-to-Stop Trip Planner:
+  - Feed-scoped trip planning API endpoint (`GET /api/v1/feeds/{feed_slug}/plan`) accepting `origin_stop_id`, `destination_stop_id`, optional `time` (`HH:MM:SS`), optional `date` (`YYYY-MM-DD`), and `limit`.
+  - ANSI SQL-compliant single-query direct trip discovery joining aliased `stop_times` on `trips` (`st_origin.stop_sequence < st_dest.stop_sequence`) with route and stop metadata.
+  - Active GTFS calendar and calendar exception evaluation resolving service availability for the target travel date.
+  - Departure time filtering supporting GTFS overnight/extended hours (`>24:00`), with agency/stop local timezone conversion (`resolve_feed_timezone`) when date or time is omitted to ensure planning against the correct local service day.
+  - GTFS-Realtime `TripUpdate` delay enrichment associating delay seconds and adjusted estimated times with both origin departure and destination arrival, with delay status badges (`REALTIME_DELAYED`, `REALTIME_EARLY`, `REALTIME_ON_TIME`, `SCHEDULED`).
+  - Responsive, accessible React frontend component (`TripPlanner`) with stop selectors, swap button (`⇄`), departure time input, TanStack Query integration, itinerary cards with route color badges, duration, intermediate stop counts, and "View Route on Map" interaction.
+  - Clean tab navigation on Dashboard (`🚏 Stop Explorer & Arrivals` vs `🧭 Direct Trip Planner`).
+  - Comprehensive test suite: 104 Vitest frontend tests across 8 files, and 172 Pytest backend tests across 12 files.
+
+## License
+
+This project is under development. License information will be added in a future update.
