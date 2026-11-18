@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchRouteMap } from "../lib/api";
+import { fetchFeedVehicles, fetchRouteMap } from "../lib/api";
 import { formatObservationAge } from "../lib/formatters";
 import {
   getPollingIntervalMs,
@@ -11,6 +11,9 @@ import { useAppStore } from "../stores/appStore";
 export function MapDetailsPanel() {
   const selectedFeedSlug = useAppStore((state) => state.selectedFeedSlug);
   const selectedRouteId = useAppStore((state) => state.selectedRouteId);
+  const selectedRouteFeedSlug = useAppStore(
+    (state) => state.selectedRouteFeedSlug,
+  );
   const selectedStop = useAppStore((state) => state.selectedStop);
   const setSelectedStop = useAppStore((state) => state.setSelectedStop);
   const selectedVehicleId = useAppStore((state) => state.selectedVehicleId);
@@ -19,12 +22,16 @@ export function MapDetailsPanel() {
   const [activeTab, setActiveTab] = useState<"stops" | "vehicles">("stops");
 
   const pollingInterval = getPollingIntervalMs();
-  const isPollingEnabled = Boolean(selectedFeedSlug && selectedRouteId);
+  const routeFeedSlug = selectedRouteFeedSlug ?? selectedFeedSlug;
+  const hasSeparateLiveFeed = Boolean(
+    selectedRouteId && selectedFeedSlug && routeFeedSlug !== selectedFeedSlug,
+  );
+  const isPollingEnabled = Boolean(routeFeedSlug && selectedRouteId);
   const isVisible = useDocumentVisibility();
 
   const { data: routeMapData } = useQuery({
-    queryKey: ["routeMap", selectedFeedSlug, selectedRouteId],
-    queryFn: () => fetchRouteMap(selectedFeedSlug!, selectedRouteId!),
+    queryKey: ["routeMap", routeFeedSlug, selectedRouteId],
+    queryFn: () => fetchRouteMap(routeFeedSlug!, selectedRouteId!),
     enabled: isPollingEnabled,
     refetchInterval: () => {
       if (!isPollingEnabled || !isVisible) {
@@ -36,12 +43,29 @@ export function MapDetailsPanel() {
     refetchOnWindowFocus: true,
   });
 
-  if (!selectedRouteId || !routeMapData) {
+  const { data: feedVehicles = [] } = useQuery({
+    queryKey: ["feedVehicles", selectedFeedSlug],
+    queryFn: () => fetchFeedVehicles(selectedFeedSlug!),
+    enabled: Boolean(
+      selectedFeedSlug && (!selectedRouteId || hasSeparateLiveFeed),
+    ),
+    refetchInterval: isVisible ? pollingInterval : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
+
+  if (!selectedFeedSlug) {
     return null;
   }
 
-  const stops = routeMapData.stops || [];
-  const vehicles = routeMapData.vehicles || [];
+  const stops = routeMapData?.stops || [];
+  const routeVehicles = routeMapData?.vehicles || [];
+  const liveRouteVehicles = hasSeparateLiveFeed
+    ? feedVehicles.filter((vehicle) => vehicle.route_id === selectedRouteId)
+    : [];
+  const vehicles = selectedRouteId
+    ? [...routeVehicles, ...liveRouteVehicles]
+    : feedVehicles;
 
   const activeVehicle = vehicles.find((v) => v.entity_id === selectedVehicleId);
 
@@ -55,9 +79,10 @@ export function MapDetailsPanel() {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            disabled={!selectedRouteId}
             onClick={() => setActiveTab("stops")}
             className={`px-3 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-              activeTab === "stops"
+              activeTab === "stops" && selectedRouteId
                 ? "bg-blue-600 text-white"
                 : "bg-gray-800 text-gray-400 hover:text-white"
             }`}
@@ -68,7 +93,7 @@ export function MapDetailsPanel() {
             type="button"
             onClick={() => setActiveTab("vehicles")}
             className={`px-3 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-              activeTab === "vehicles"
+              activeTab === "vehicles" || !selectedRouteId
                 ? "bg-blue-600 text-white"
                 : "bg-gray-800 text-gray-400 hover:text-white"
             }`}
@@ -129,7 +154,7 @@ export function MapDetailsPanel() {
       )}
 
       {/* Tab: Stops List */}
-      {activeTab === "stops" && (
+      {activeTab === "stops" && selectedRouteId && (
         <div className="max-h-60 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
           {stops.length === 0 ? (
             <p className="text-xs text-gray-500 py-3 text-center">
@@ -143,7 +168,7 @@ export function MapDetailsPanel() {
                   key={stop.stop_id}
                   type="button"
                   onClick={() =>
-                    setSelectedStop({
+                  setSelectedStop({
                       stop_id: stop.stop_id,
                       code: stop.code,
                       name: stop.name,
@@ -154,8 +179,8 @@ export function MapDetailsPanel() {
                       location_type: 0,
                       wheelchair_boarding: stop.wheelchair_boarding,
                       platform_code: null,
-                      timezone: null,
-                    })
+                    timezone: null,
+                  }, routeFeedSlug)
                   }
                   aria-pressed={isSelected}
                   className={`w-full text-left p-2 rounded text-xs flex items-center justify-between gap-2 border transition-colors cursor-pointer ${
@@ -188,7 +213,7 @@ export function MapDetailsPanel() {
       )}
 
       {/* Tab: Vehicles List */}
-      {activeTab === "vehicles" && (
+      {(activeTab === "vehicles" || !selectedRouteId) && (
         <div className="max-h-60 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
           {vehicles.length === 0 ? (
             <p className="text-xs text-gray-500 py-3 text-center">

@@ -4,6 +4,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
+import asyncpg
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -76,6 +77,18 @@ async def operational_error_handler(
 async def dbapi_error_handler(request: Request, exc: DBAPIError) -> JSONResponse:
     """Sanitize database DBAPI errors into 503 responses."""
     logger.warning("Database error: %s", type(exc).__name__)
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Database service is temporarily unavailable"},
+    )
+
+
+@app.exception_handler(asyncpg.PostgresError)
+async def postgres_error_handler(
+    request: Request, exc: asyncpg.PostgresError
+) -> JSONResponse:
+    """Sanitize raw asyncpg errors that SQLAlchemy does not wrap."""
+    logger.warning("PostgreSQL error: %s", type(exc).__name__)
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={"detail": "Database service is temporarily unavailable"},

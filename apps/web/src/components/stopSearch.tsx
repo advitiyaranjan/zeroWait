@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchStops } from "../lib/api";
+import { fetchFeeds, fetchStops } from "../lib/api";
+import { getScheduleFeedSlug } from "../lib/feedUtils";
 import { useAppStore } from "../stores/appStore";
 import type { StopSummary } from "../types/transit";
 
@@ -8,6 +9,11 @@ export function StopSearch() {
   const selectedFeedSlug = useAppStore((state) => state.selectedFeedSlug);
   const selectedStop = useAppStore((state) => state.selectedStop);
   const setSelectedStop = useAppStore((state) => state.setSelectedStop);
+  const { data: feeds } = useQuery({
+    queryKey: ["feeds"],
+    queryFn: fetchFeeds,
+  });
+  const stopsFeedSlug = getScheduleFeedSlug(selectedFeedSlug, feeds);
 
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -19,9 +25,9 @@ export function StopSearch() {
     error,
     refetch,
   } = useQuery({
-    queryKey: ["stops", selectedFeedSlug, searchTerm],
-    queryFn: () => fetchStops(selectedFeedSlug!, searchTerm),
-    enabled: Boolean(selectedFeedSlug),
+    queryKey: ["stops", stopsFeedSlug, searchTerm],
+    queryFn: () => fetchStops(stopsFeedSlug!, searchTerm),
+    enabled: Boolean(stopsFeedSlug),
   });
 
   const stops = stopResponse?.data ?? [];
@@ -49,6 +55,12 @@ export function StopSearch() {
           </span>
         )}
       </div>
+
+      {stopsFeedSlug !== selectedFeedSlug && (
+        <p className="text-xs text-blue-300" role="status">
+          Searching stops from the paired schedule feed.
+        </p>
+      )}
 
       <div className="relative">
         <input
@@ -117,7 +129,7 @@ export function StopSearch() {
               key={stop.stop_id}
               stop={stop}
               isSelected={isSelected}
-              onSelect={() => setSelectedStop(stop)}
+              onSelect={() => setSelectedStop(stop, stopsFeedSlug)}
             />
           );
         })}

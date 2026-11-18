@@ -34,6 +34,7 @@ async def poll_enabled_feeds_once() -> None:
             feed = (await session.execute(feed_stmt)).scalar_one_or_none()
             if feed is None:
                 continue
+            feed_slug = feed.slug
 
             try:
                 count = await VehiclePositionIngestionService().ingest_for_feed(
@@ -41,14 +42,14 @@ async def poll_enabled_feeds_once() -> None:
                 )
                 logger.info(
                     "Realtime poll completed for feed %s with %d vehicles",
-                    feed.slug,
+                    feed_slug,
                     count,
                 )
             except Exception as exc:
                 await session.rollback()
                 logger.warning(
                     "Realtime poll failed for feed %s (%s)",
-                    feed.slug,
+                    feed_slug,
                     type(exc).__name__,
                 )
 

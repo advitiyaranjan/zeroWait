@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   API_BASE_URL,
   fetchApi,
+  fetchAllRoutes,
   fetchArrivals,
   fetchFeeds,
   fetchFeedVehicles,
@@ -112,6 +113,38 @@ describe("api client", () => {
       expect.stringMatching(
         /\/api\/v1\/feeds\/metro-city\/routes\?page=1&page_size=50&q=express/,
       ),
+    );
+  });
+
+  it("fetchAllRoutes loads and combines every route page", async () => {
+    const page = (routeId: string, currentPage: number) => ({
+      data: [{ route_id: routeId }],
+      pagination: {
+        total: 3,
+        page: currentPage,
+        page_size: 100,
+        total_pages: 3,
+        has_next: currentPage < 3,
+        has_prev: currentPage > 1,
+      },
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input) => {
+        const url = new URL(String(input));
+        const pageNumber = Number(url.searchParams.get("page"));
+        return new Response(JSON.stringify(page(`R${pageNumber}`, pageNumber)), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    );
+
+    const routes = await fetchAllRoutes("metro-city");
+
+    expect(routes.map((route) => route.route_id)).toEqual(["R1", "R2", "R3"]);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/page=1&page_size=100/),
     );
   });
 

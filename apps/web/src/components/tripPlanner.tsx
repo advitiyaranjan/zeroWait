@@ -1,12 +1,18 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchStops, planTrip } from "../lib/api";
+import { fetchFeeds, fetchStops, planTrip } from "../lib/api";
+import { getScheduleFeedSlug } from "../lib/feedUtils";
 import { useAppStore } from "../stores/appStore";
 import type { TripItinerary } from "../types/transit";
 
 export function TripPlanner() {
   const selectedFeedSlug = useAppStore((state) => state.selectedFeedSlug);
   const setSelectedRouteId = useAppStore((state) => state.setSelectedRouteId);
+  const { data: feeds } = useQuery({
+    queryKey: ["feeds"],
+    queryFn: fetchFeeds,
+  });
+  const scheduleFeedSlug = getScheduleFeedSlug(selectedFeedSlug, feeds);
 
   const [originStopId, setOriginStopId] = useState<string>("");
   const [destStopId, setDestStopId] = useState<string>("");
@@ -14,9 +20,9 @@ export function TripPlanner() {
 
   // Fetch stops for the selected feed
   const { data: stopsData, isLoading: isLoadingStops } = useQuery({
-    queryKey: ["stops", selectedFeedSlug, 1, 100],
-    queryFn: () => fetchStops(selectedFeedSlug!, "", 1, 100),
-    enabled: Boolean(selectedFeedSlug),
+    queryKey: ["stops", scheduleFeedSlug, 1, 100],
+    queryFn: () => fetchStops(scheduleFeedSlug!, "", 1, 100),
+    enabled: Boolean(scheduleFeedSlug),
     staleTime: 60_000,
   });
 
@@ -24,7 +30,7 @@ export function TripPlanner() {
 
   // Query direct trip itineraries
   const canPlan = Boolean(
-    selectedFeedSlug && originStopId && destStopId && originStopId !== destStopId,
+    scheduleFeedSlug && originStopId && destStopId && originStopId !== destStopId,
   );
 
   const {
@@ -36,14 +42,14 @@ export function TripPlanner() {
   } = useQuery({
     queryKey: [
       "tripPlan",
-      selectedFeedSlug,
+      scheduleFeedSlug,
       originStopId,
       destStopId,
       departureTime,
     ],
     queryFn: () =>
       planTrip(
-        selectedFeedSlug!,
+        scheduleFeedSlug!,
         originStopId,
         destStopId,
         departureTime || undefined,
@@ -60,7 +66,11 @@ export function TripPlanner() {
   };
 
   const handleSelectRoute = (routeId: string) => {
-    setSelectedRouteId(routeId);
+    setSelectedRouteId(routeId, scheduleFeedSlug);
+    document.getElementById("route-map")?.scrollIntoView?.({
+      behavior: "smooth",
+      block: "start",
+    });
   };
 
   return (

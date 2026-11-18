@@ -1,11 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchRoutes } from "../lib/api";
+import { fetchAllRoutes, fetchFeeds } from "../lib/api";
+import { getScheduleFeedSlug } from "../lib/feedUtils";
 import { useAppStore } from "../stores/appStore";
 
 export function RouteSelector() {
   const selectedFeedSlug = useAppStore((state) => state.selectedFeedSlug);
   const selectedRouteId = useAppStore((state) => state.selectedRouteId);
   const setSelectedRouteId = useAppStore((state) => state.setSelectedRouteId);
+  const { data: feeds, isLoading: isLoadingFeeds } = useQuery({
+    queryKey: ["feeds"],
+    queryFn: fetchFeeds,
+  });
+  const routeFeedSlug = getScheduleFeedSlug(selectedFeedSlug, feeds);
 
   const {
     data: routeResponse,
@@ -14,12 +20,12 @@ export function RouteSelector() {
     error,
     refetch,
   } = useQuery({
-    queryKey: ["routes", selectedFeedSlug],
-    queryFn: () => fetchRoutes(selectedFeedSlug!),
-    enabled: Boolean(selectedFeedSlug),
+    queryKey: ["routes", routeFeedSlug],
+    queryFn: () => fetchAllRoutes(routeFeedSlug!),
+    enabled: Boolean(routeFeedSlug),
   });
 
-  const routes = routeResponse?.data ?? [];
+  const routes = routeResponse ?? [];
   const activeRoute = routes.find((r) => r.route_id === selectedRouteId);
 
   if (!selectedFeedSlug) {
@@ -35,9 +41,14 @@ export function RouteSelector() {
         >
           Select Transit Route
         </label>
-        {isLoading && (
+        {(isLoadingFeeds || isLoading) && (
           <span className="text-xs text-blue-400 animate-pulse" role="status">
             Loading routes...
+          </span>
+        )}
+        {!isLoadingFeeds && !isLoading && !isError && routes.length > 0 && (
+          <span className="text-xs text-gray-400" role="status">
+            {routes.length.toLocaleString()} routes available
           </span>
         )}
       </div>
@@ -63,8 +74,10 @@ export function RouteSelector() {
       <select
         id="route-select"
         value={selectedRouteId ?? ""}
-        onChange={(e) => setSelectedRouteId(e.target.value || null)}
-        disabled={isLoading || isError}
+        onChange={(e) =>
+          setSelectedRouteId(e.target.value || null, routeFeedSlug)
+        }
+        disabled={isLoadingFeeds || isLoading || isError || !routeFeedSlug}
         aria-label="Select transit route"
         className="w-full bg-gray-950 border border-gray-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
       >
@@ -77,10 +90,15 @@ export function RouteSelector() {
         ))}
       </select>
 
-      {!isLoading && !isError && routes.length === 0 && (
+      {routeFeedSlug !== selectedFeedSlug && routes.length > 0 && (
+        <p className="text-xs text-blue-300" role="status">
+          Routes loaded from the paired schedule feed. Live vehicles remain on the selected feed.
+        </p>
+      )}
+
+      {!isLoadingFeeds && !isLoading && !isError && routes.length === 0 && (
         <p role="status" className="text-xs text-amber-300">
-          Scheduled routes are not currently available for this feed. Live
-          vehicle positions remain visible on the map.
+          No schedule feed with routes is available for this city yet.
         </p>
       )}
 

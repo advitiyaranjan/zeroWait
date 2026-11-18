@@ -329,7 +329,7 @@ if (-not [string]::IsNullOrWhiteSpace($ArchivePath)) {
 
 # Option B: Automated Download if requested or configured
 if (-not $resolvedArchive -and ($DownloadStaticFeed -or -not [string]::IsNullOrWhiteSpace($StaticFeedUrl))) {
-    $urlToDownload = if (-not [string]::IsNullOrWhiteSpace($StaticFeedUrl)) { $StaticFeedUrl } else { "https://otd.delhi.gov.in/data/static/delhi-buses.zip" }
+    $urlToDownload = if (-not [string]::IsNullOrWhiteSpace($StaticFeedUrl)) { $StaticFeedUrl } else { "https://ethanc8.github.io/delhi-gtfs/bus.zip" }
     try {
         $downloadedFile = Download-ArchiveFile -Url $urlToDownload -DestinationPath $defaultArchivePath
         Test-GTFSArchive -Path $downloadedFile -ExpectedHash $ExpectedSha256
@@ -440,7 +440,7 @@ try {
             & $dockerPath compose exec -T api python -m app.services.gtfs.cli register `
                 --slug $staticFeedSlug `
                 --city-name "Delhi Buses (Schedule & Routes)" `
-                --static-url "https://otd.delhi.gov.in/data/static/delhi-buses.zip" `
+                --static-url "https://ethanc8.github.io/delhi-gtfs/bus.zip" `
                 --allow-existing
             if ($LASTEXITCODE -ne 0) {
                 throw "Failed to register static feed '$staticFeedSlug'."

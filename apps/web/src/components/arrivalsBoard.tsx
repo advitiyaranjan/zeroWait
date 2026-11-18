@@ -17,11 +17,15 @@ import type { StopArrivalPrediction } from "../types/transit";
 
 export function ArrivalsBoard() {
   const selectedFeedSlug = useAppStore((state) => state.selectedFeedSlug);
+  const selectedStopFeedSlug = useAppStore(
+    (state) => state.selectedStopFeedSlug,
+  );
   const selectedStop = useAppStore((state) => state.selectedStop);
   const liveStatus = useAppStore((state) => state.liveStatus);
 
   const pollingInterval = getPollingIntervalMs();
-  const isPollingEnabled = Boolean(selectedFeedSlug && selectedStop);
+  const arrivalsFeedSlug = selectedStopFeedSlug ?? selectedFeedSlug;
+  const isPollingEnabled = Boolean(arrivalsFeedSlug && selectedStop);
   const isVisible = useDocumentVisibility();
 
   const {
@@ -33,8 +37,8 @@ export function ArrivalsBoard() {
     error,
     refetch,
   } = useQuery({
-    queryKey: ["arrivals", selectedFeedSlug, selectedStop?.stop_id],
-    queryFn: () => fetchArrivals(selectedFeedSlug!, selectedStop!.stop_id),
+    queryKey: ["arrivals", arrivalsFeedSlug, selectedStop?.stop_id],
+    queryFn: () => fetchArrivals(arrivalsFeedSlug!, selectedStop!.stop_id),
     enabled: isPollingEnabled,
     refetchInterval: () => {
       // Pause redundant 30s background polling when feed WebSocket is actively connected

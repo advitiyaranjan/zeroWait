@@ -113,6 +113,20 @@ export async function fetchRoutes(
   );
 }
 
+/** Load every route for route pickers that need the complete feed. */
+export async function fetchAllRoutes(feedSlug: string): Promise<RouteSummary[]> {
+  const pageSize = 100;
+  const firstPage = await fetchRoutes(feedSlug, undefined, 1, pageSize);
+  const remainingPages = await Promise.all(
+    Array.from(
+      { length: Math.max(0, firstPage.pagination.total_pages - 1) },
+      (_, index) => fetchRoutes(feedSlug, undefined, index + 2, pageSize),
+    ),
+  );
+
+  return [firstPage, ...remainingPages].flatMap((page) => page.data);
+}
+
 export async function fetchRouteMap(
   feedSlug: string,
   routeId: string,

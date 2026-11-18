@@ -19,6 +19,9 @@ const TILE_ATTRIBUTION =
 export function MapView() {
   const selectedFeedSlug = useAppStore((state) => state.selectedFeedSlug);
   const selectedRouteId = useAppStore((state) => state.selectedRouteId);
+  const selectedRouteFeedSlug = useAppStore(
+    (state) => state.selectedRouteFeedSlug,
+  );
   const selectedStop = useAppStore((state) => state.selectedStop);
   const setSelectedStop = useAppStore((state) => state.setSelectedStop);
   const selectedVehicleId = useAppStore((state) => state.selectedVehicleId);
@@ -31,9 +34,15 @@ export function MapView() {
   const lastFittedRouteRef = useRef<string | null>(null);
 
   const tileUrl = import.meta.env.VITE_MAP_TILE_URL || DEFAULT_TILE_URL;
+  const routeFeedSlug = selectedRouteFeedSlug ?? selectedFeedSlug;
+  const hasSeparateLiveFeed = Boolean(
+    selectedRouteId && selectedFeedSlug && routeFeedSlug !== selectedFeedSlug,
+  );
   const pollingInterval = getPollingIntervalMs();
-  const isPollingEnabled = Boolean(selectedFeedSlug && selectedRouteId);
-  const isFeedOverviewEnabled = Boolean(selectedFeedSlug && !selectedRouteId);
+  const isPollingEnabled = Boolean(routeFeedSlug && selectedRouteId);
+  const isFeedOverviewEnabled = Boolean(
+    selectedFeedSlug && (!selectedRouteId || hasSeparateLiveFeed),
+  );
   const isVisible = useDocumentVisibility();
 
   const {
@@ -45,8 +54,8 @@ export function MapView() {
     error,
     refetch,
   } = useQuery({
-    queryKey: ["routeMap", selectedFeedSlug, selectedRouteId],
-    queryFn: () => fetchRouteMap(selectedFeedSlug!, selectedRouteId!),
+    queryKey: ["routeMap", routeFeedSlug, selectedRouteId],
+    queryFn: () => fetchRouteMap(routeFeedSlug!, selectedRouteId!),
     enabled: isPollingEnabled,
     refetchInterval: () => {
       // Pause redundant 30s background polling when feed WebSocket is actively connected
@@ -69,26 +78,46 @@ export function MapView() {
     refetchOnWindowFocus: true,
   });
 
-  const displayedVehicles = routeMapData?.vehicles ?? feedVehiclesQuery.data ?? [];
-  const activeDataUpdatedAt = selectedRouteId
-    ? dataUpdatedAt
-    : feedVehiclesQuery.dataUpdatedAt;
+  const routeVehicles = routeMapData?.vehicles ?? [];
+  const liveRouteVehicles = hasSeparateLiveFeed
+    ? (feedVehiclesQuery.data ?? []).filter(
+        (vehicle) => vehicle.route_id === selectedRouteId,
+      )
+    : [];
+  const displayedVehicles = selectedRouteId
+    ? [...routeVehicles, ...liveRouteVehicles]
+    : feedVehiclesQuery.data ?? [];
+  const activeDataUpdatedAt =
+    hasSeparateLiveFeed
+      ? feedVehiclesQuery.dataUpdatedAt
+      : selectedRouteId
+        ? dataUpdatedAt
+        : feedVehiclesQuery.dataUpdatedAt;
   const activeIsLoading = selectedRouteId
-    ? isLoading
+    ? isLoading || (hasSeparateLiveFeed && feedVehiclesQuery.isLoading)
     : feedVehiclesQuery.isLoading;
   const activeIsFetching = selectedRouteId
-    ? isFetching
+    ? isFetching || (hasSeparateLiveFeed && feedVehiclesQuery.isFetching)
     : feedVehiclesQuery.isFetching;
-  const activeError = selectedRouteId ? error : feedVehiclesQuery.error;
+  const activeError =
+    selectedRouteId && isError
+      ? error
+      : hasSeparateLiveFeed || !selectedRouteId
+        ? feedVehiclesQuery.error
+        : error;
   const activeHasData = selectedRouteId
-    ? routeMapData !== undefined
+    ? routeMapData !== undefined || feedVehiclesQuery.data !== undefined
     : feedVehiclesQuery.data !== undefined;
   const hasError = selectedRouteId
-    ? isError || Boolean(error)
+    ? isError || (hasSeparateLiveFeed && feedVehiclesQuery.isError)
     : feedVehiclesQuery.isError || Boolean(feedVehiclesQuery.error);
-  const refreshActiveMap = selectedRouteId
+  const refreshActiveMap = selectedRouteId && !hasSeparateLiveFeed
     ? refetch
-    : feedVehiclesQuery.refetch;
+    : hasSeparateLiveFeed
+      ? async () => {
+          await Promise.all([refetch(), feedVehiclesQuery.refetch()]);
+        }
+      : feedVehiclesQuery.refetch;
 
   usePollingVisibilityRefresh(
     isPollingEnabled || isFeedOverviewEnabled,
@@ -105,8 +134,10 @@ export function MapView() {
     }
 
     const map = L.map(mapContainerRef.current, {
-      center: [20.0, 0.0],
-      zoom: 2,
+      // Delhi is the configured demo feed and gives the map a useful starting
+      // view while the first live positions are loading.
+      center: [28.6139, 77.209],
+      zoom: 10,
       attributionControl: true,
       zoomControl: true,
     });
@@ -201,11 +232,31 @@ export function MapView() {
             wheelchair_boarding: stop.wheelchair_boarding,
             platform_code: null,
             timezone: null,
-          });
+          }, routeFeedSlug);
         });
 
         marker.addTo(layerGroup);
       }
+    }
+
+    // A stop can also be selected from Stop Explorer while no route is active.
+    // Keep that selection visible and navigable on the map in that case.
+    if (
+      selectedStop &&
+      !routeMapData?.stops.some((stop) => stop.stop_id === selectedStop.stop_id)
+    ) {
+      const marker = L.circleMarker(
+        [selectedStop.latitude, selectedStop.longitude],
+        {
+          radius: 9,
+          color: "#bfdbfe",
+          fillColor: "#2563eb",
+          fillOpacity: 1,
+          weight: 3,
+        },
+      );
+      marker.bindTooltip(`<strong>${selectedStop.name}</strong> · Selected stop`);
+      marker.addTo(layerGroup);
     }
 
     // 2c. Render fresh vehicle markers with bearing rotation
@@ -255,7 +306,7 @@ export function MapView() {
     // 2d. Fit bounds to all route elements on initial load or route change
     // Avoid re-fitting on background polling ticks to preserve user zoom/pan and tile stability
     const fitKey = selectedRouteId
-      ? `${selectedFeedSlug}:${selectedRouteId}`
+      ? `${routeFeedSlug}:${selectedRouteId}`
       : `feed:${selectedFeedSlug}`;
     if (boundsPoints.length > 0 && lastFittedRouteRef.current !== fitKey) {
       lastFittedRouteRef.current = fitKey;
@@ -270,12 +321,25 @@ export function MapView() {
     feedVehiclesQuery.data,
     displayedVehicles,
     selectedFeedSlug,
+    routeFeedSlug,
     selectedRouteId,
     selectedStop?.stop_id,
     selectedVehicleId,
     setSelectedStop,
     setSelectedVehicleId,
   ]);
+
+  // Selecting a stop from search or the ordered route list should bring it
+  // into view without resetting the user's current map position on polls.
+  useEffect(() => {
+    if (selectedStop && mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo(
+        [selectedStop.latitude, selectedStop.longitude],
+        Math.max(mapInstanceRef.current.getZoom(), 14),
+        { duration: 0.5 },
+      );
+    }
+  }, [selectedStop?.stop_id, selectedStop?.latitude, selectedStop?.longitude]);
 
   // Reset fitted route reference when route selection is cleared
   useEffect(() => {
@@ -298,7 +362,7 @@ export function MapView() {
               • Route {routeMapData.route_short_name || routeMapData.route_id}
             </span>
           )}
-          {isFeedOverviewEnabled && (
+          {isFeedOverviewEnabled && !selectedRouteId && (
             <span className="text-gray-400">• Live vehicles across feed</span>
           )}
         </div>
@@ -423,7 +487,7 @@ export function MapView() {
           </div>
         )}
 
-        {isFeedOverviewEnabled &&
+          {isFeedOverviewEnabled && !selectedRouteId &&
           !feedVehiclesQuery.isLoading &&
           feedVehiclesQuery.data?.length === 0 && (
             <div className="absolute inset-0 bg-gray-950/80 backdrop-blur-xs flex items-center justify-center p-6 text-center z-10 pointer-events-none">

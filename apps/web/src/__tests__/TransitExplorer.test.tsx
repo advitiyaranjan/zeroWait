@@ -541,17 +541,7 @@ describe("Transit Explorer Components", () => {
 
     it("fetches and renders route options when feed is selected", async () => {
       useAppStore.getState().setSelectedFeedSlug("metro-city");
-      vi.spyOn(api, "fetchRoutes").mockResolvedValue({
-        data: mockRoutesMetro,
-        pagination: {
-          total: 2,
-          page: 1,
-          page_size: 50,
-          total_pages: 1,
-          has_next: false,
-          has_prev: false,
-        },
-      });
+      vi.spyOn(api, "fetchAllRoutes").mockResolvedValue(mockRoutesMetro);
 
       renderWithClient(<RouteSelector />);
 
@@ -567,17 +557,7 @@ describe("Transit Explorer Components", () => {
 
     it("selecting a route updates selectedRouteId in appStore", async () => {
       useAppStore.getState().setSelectedFeedSlug("metro-city");
-      vi.spyOn(api, "fetchRoutes").mockResolvedValue({
-        data: mockRoutesMetro,
-        pagination: {
-          total: 2,
-          page: 1,
-          page_size: 50,
-          total_pages: 1,
-          has_next: false,
-          has_prev: false,
-        },
-      });
+      vi.spyOn(api, "fetchAllRoutes").mockResolvedValue(mockRoutesMetro);
 
       renderWithClient(<RouteSelector />);
 
@@ -595,22 +575,54 @@ describe("Transit Explorer Components", () => {
       expect(useAppStore.getState().selectedRouteId).toBe("route-blue");
     });
 
+    it("loads paired schedule routes while a live-only feed is selected", async () => {
+      const pairedFeeds: FeedSummary[] = [
+        {
+          id: 10,
+          city_name: "Delhi Buses",
+          slug: "delhi-bus",
+          feed_status: "active",
+          is_live_tracking_enabled: true,
+          last_static_import_at: null,
+          last_realtime_poll_at: null,
+        },
+        {
+          id: 11,
+          city_name: "Delhi Buses (Schedule & Routes)",
+          slug: "delhi-buses",
+          feed_status: "active",
+          is_live_tracking_enabled: false,
+          last_static_import_at: null,
+          last_realtime_poll_at: null,
+        },
+      ];
+      useAppStore.getState().setSelectedFeedSlug("delhi-bus");
+      vi.spyOn(api, "fetchFeeds").mockResolvedValue(pairedFeeds);
+      const routesSpy = vi
+        .spyOn(api, "fetchAllRoutes")
+        .mockResolvedValue(mockRoutesMetro);
+
+      renderWithClient(<RouteSelector />);
+
+      const routeOption = await screen.findByRole("option", {
+        name: /B1 — Blue Crosstown/i,
+      });
+      expect(routesSpy).toHaveBeenCalledWith("delhi-buses");
+      fireEvent.change(screen.getByRole("combobox", { name: /Select transit route/i }), {
+        target: { value: "route-blue" },
+      });
+
+      expect(useAppStore.getState().selectedRouteId).toBe("route-blue");
+      expect(useAppStore.getState().selectedRouteFeedSlug).toBe("delhi-buses");
+      expect(routeOption).toBeInTheDocument();
+    });
+
     it("displays error alert and retry button when route fetch fails", async () => {
       useAppStore.getState().setSelectedFeedSlug("metro-city");
       const fetchSpy = vi
-        .spyOn(api, "fetchRoutes")
+        .spyOn(api, "fetchAllRoutes")
         .mockRejectedValueOnce(new Error("Route service timeout"))
-        .mockResolvedValueOnce({
-          data: mockRoutesMetro,
-          pagination: {
-            total: 2,
-            page: 1,
-            page_size: 50,
-            total_pages: 1,
-            has_next: false,
-            has_prev: false,
-          },
-        });
+        .mockResolvedValueOnce(mockRoutesMetro);
 
       renderWithClient(<RouteSelector />);
 
@@ -863,17 +875,7 @@ describe("Transit Explorer Components", () => {
 
     it("switching feeds clears selected route, stop, vehicle, and resets map navigator", async () => {
       vi.spyOn(api, "fetchFeeds").mockResolvedValue(mockFeeds);
-      vi.spyOn(api, "fetchRoutes").mockResolvedValue({
-        data: mockRoutesMetro,
-        pagination: {
-          total: 2,
-          page: 1,
-          page_size: 50,
-          total_pages: 1,
-          has_next: false,
-          has_prev: false,
-        },
-      });
+      vi.spyOn(api, "fetchAllRoutes").mockResolvedValue(mockRoutesMetro);
       vi.spyOn(api, "fetchRouteMap").mockResolvedValue(mockRouteMapWithShapes);
 
       renderWithClient(

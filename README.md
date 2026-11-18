@@ -91,7 +91,9 @@ zeroWait tracks Delhi public buses using two distinct data feeds. Due to license
 | Asset | Source | Acquisition Instructions | Configuration in zeroWait |
 |---|---|---|---|
 | **Real-time Vehicle Positions (`delhi-bus`)** | [Open Transit Data Delhi](https://otd.delhi.gov.in/) | Sign up for a free developer account to get an API key. | Set `DELHI_TRANSIT_API_KEY=<key>` in `.env` |
-| **Static GTFS Schedules & Routes (`delhi-buses`)** | [Delhi Transport Stack](https://delhi.transportstack.in/data-services) | Sign in and request the **Delhi Buses: GTFS Static Data – DTC / DoT** archive from *Data & Services*. | Save to `data/gtfs/delhi-buses.zip` or pass `-ArchivePath` |
+| **Static GTFS Schedules & Routes (`delhi-buses`)** | [Delhi Transport Stack](https://delhi.transportstack.in/data-services); [downloadable community mirror](https://github.com/ethanc8/delhi-gtfs) of the OTD Delhi feed | Run setup with `-DownloadStaticFeed` to fetch the mirror, or sign in to Delhi Transport Stack and request its official **Delhi Buses: GTFS Static Data – DTC / DoT** archive. | Save to `data/gtfs/delhi-buses.zip` or pass `-ArchivePath` |
+
+The community mirror contains the OTD static feed with its service calendar extended through January 1, 2027. It has no `shapes.txt`, so zeroWait can show a route's ordered stops and live vehicles, but cannot draw an authoritative road-by-road route line from this archive. The official OTD static page currently lists its source data as last updated June 20, 2024; use a newer authorized release if one becomes available.
 
 ### 4. Run Automated Setup
 Open PowerShell at the repository root and run:
@@ -195,7 +197,12 @@ docker compose down
 
 ## Environment Configuration
 
-The `.env.example` file contains all required environment variables. Copy it to `.env` and configure each section:
+The `.env.example` file contains all required environment variables. Copy it to `.env`
+and configure each section:
+
+When running the API from `apps/api`, it reads the repository-root `.env` file. For
+local development, set `DATABASE_URL` to your PostgreSQL/PostGIS connection using
+`localhost` as the host; the `db` hostname is only for Docker Compose.
 
 | Variable Group | Description |
 |---------------|-------------|

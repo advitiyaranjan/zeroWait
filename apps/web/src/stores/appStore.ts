@@ -8,8 +8,14 @@ export interface AppState {
   /** Currently selected route identifier */
   selectedRouteId: string | null;
 
+  /** Feed that owns the selected route, which may differ from the live feed */
+  selectedRouteFeedSlug: string | null;
+
   /** Currently selected transit stop */
   selectedStop: StopSummary | null;
+
+  /** Feed that owns the selected stop */
+  selectedStopFeedSlug: string | null;
 
   /** Currently selected realtime vehicle entity/vehicle ID on the map */
   selectedVehicleId: string | null;
@@ -27,10 +33,10 @@ export interface AppState {
   setSelectedFeedSlug: (slug: string | null) => void;
 
   /** Update selected route */
-  setSelectedRouteId: (routeId: string | null) => void;
+  setSelectedRouteId: (routeId: string | null, feedSlug?: string | null) => void;
 
   /** Select a specific stop within the active feed/route */
-  setSelectedStop: (stop: StopSummary | null) => void;
+  setSelectedStop: (stop: StopSummary | null, feedSlug?: string | null) => void;
 
   /** Select a vehicle on the map to inspect */
   setSelectedVehicleId: (vehicleId: string | null) => void;
@@ -48,10 +54,12 @@ export interface AppState {
   reset: () => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   selectedFeedSlug: null,
   selectedRouteId: null,
+  selectedRouteFeedSlug: null,
   selectedStop: null,
+  selectedStopFeedSlug: null,
   selectedVehicleId: null,
   selectedCity: null,
   liveStatus: "disconnected",
@@ -63,21 +71,29 @@ export const useAppStore = create<AppState>((set) => ({
       selectedCity: slug,
       // Feed isolation: changing feed clears previously selected route, stop, vehicle, and live connection
       selectedRouteId: null,
+      selectedRouteFeedSlug: null,
       selectedStop: null,
+      selectedStopFeedSlug: null,
       selectedVehicleId: null,
       liveStatus: "disconnected",
       lastLiveUpdateAt: null,
     }),
 
-  setSelectedRouteId: (routeId) =>
+  setSelectedRouteId: (routeId, feedSlug) =>
     set({
       selectedRouteId: routeId,
+      selectedRouteFeedSlug: routeId
+        ? feedSlug ?? get().selectedRouteFeedSlug ?? get().selectedFeedSlug
+        : null,
       selectedVehicleId: null,
     }),
 
-  setSelectedStop: (stop) =>
+  setSelectedStop: (stop, feedSlug) =>
     set({
       selectedStop: stop,
+      selectedStopFeedSlug: stop
+        ? feedSlug ?? get().selectedStopFeedSlug ?? get().selectedFeedSlug
+        : null,
     }),
 
   setSelectedVehicleId: (vehicleId) =>
@@ -90,7 +106,9 @@ export const useAppStore = create<AppState>((set) => ({
       selectedCity: city,
       selectedFeedSlug: city,
       selectedRouteId: null,
+      selectedRouteFeedSlug: null,
       selectedStop: null,
+      selectedStopFeedSlug: null,
       selectedVehicleId: null,
       liveStatus: "disconnected",
       lastLiveUpdateAt: null,
@@ -110,7 +128,9 @@ export const useAppStore = create<AppState>((set) => ({
     set({
       selectedFeedSlug: null,
       selectedRouteId: null,
+      selectedRouteFeedSlug: null,
       selectedStop: null,
+      selectedStopFeedSlug: null,
       selectedVehicleId: null,
       selectedCity: null,
       liveStatus: "disconnected",

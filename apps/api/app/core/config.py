@@ -1,16 +1,25 @@
 """zeroWait API — Core configuration."""
 
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_API_ROOT = Path(__file__).resolve().parents[2]
+_WORKSPACE_ROOT = _API_ROOT.parent.parent
+_ENV_FILE = (
+    _WORKSPACE_ROOT / ".env"
+    if (_WORKSPACE_ROOT / ".env.example").is_file()
+    else _API_ROOT / ".env"
+)
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

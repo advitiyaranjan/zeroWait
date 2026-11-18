@@ -92,6 +92,7 @@ export function Dashboard() {
 
         {/* Map Visualization & Route Explorer */}
         <section
+          id="route-map"
           className="grid grid-cols-1 lg:grid-cols-12 gap-6"
           aria-label="Route map visualization"
         >
